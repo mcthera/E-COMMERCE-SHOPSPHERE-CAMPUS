@@ -1,6 +1,7 @@
 (function () {
   "use strict";
   const S = window.Store;
+  const supabase = S.supabase;
   const $ = (s, c = document) => c.querySelector(s);
   const $$ = (s, c = document) => [...c.querySelectorAll(s)];
   const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -9,6 +10,7 @@
 
   let currentUser = null;
   let myProducts = [];
+  let myOrders = [];
 
   async function init() {
     try {
@@ -39,32 +41,53 @@
   }
 
   async function loadSellerData() {
-    const allProducts = await S.getProducts();
-    myProducts = allProducts.filter((p) => p.seller_id === currentUser.id);
-    renderDashboard();
-    renderMyProducts();
-    renderSellerOrders();
+    try {
+      // Fetch fresh products from Supabase
+      const allProducts = await S.getProducts();
+      myProducts = allProducts.filter((p) => p.seller_id === currentUser.id);
+
+      // Fetch orders from Supabase (or fallback to local storage)
+      const { data: ordersData, error } = await supabase
+        .from("orders")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      const allOrders = error || !ordersData ? JSON.parse(localStorage.getItem("ecom_orders")) || [] : ordersData;
+
+      // Filter orders containing items belonging to this specific logged-in seller
+      const myProductIds = new Set(myProducts.map(p => p.id));
+      myOrders = allOrders.filter(o => {
+        const items = o.items || [];
+        return items.some(item => myProductIds.has(item.id));
+      });
+
+      renderDashboard();
+      renderMyProducts();
+      renderSellerOrders();
+    } catch (err) {
+      console.error("Error loading seller data:", err);
+      S.toast("Could not sync seller data", "error");
+    }
   }
 
   function renderDashboard() {
-    const orders = JSON.parse(localStorage.getItem("ecom_orders")) || [];
-    // Filter orders containing items belonging to this seller
     const myProductIds = new Set(myProducts.map(p => p.id));
-    const mySales = orders.filter(o => o.items.some(item => myProductIds.has(item.id)));
-    const totalEarnings = mySales.reduce((sum, o) => {
-      const relevantItemsTotal = o.items
-        .filter(item => myProductIds.has(item.id))
-        .reduce((s, i) => s + (i.price * i.qty), 0);
-      return sum + relevantItemsTotal;
+
+    // Calculate total earnings from items sold by this seller
+    const totalEarnings = myOrders.reduce((sum, o) => {
+      const relevantItems = (o.items || []).filter(item => myProductIds.has(item.id));
+      const orderTotal = relevantItems.reduce((s, i) => s + ((i.price || 0) * (i.qty || 1)), 0);
+      return sum + orderTotal;
     }, 0);
 
+    // Render the stat cards matching your design reference
     $("#sellerStatCards").innerHTML = `
       <div class="stat stat--sales"><div class="stat__icon">💰</div>
         <div class="stat__label">Total Sales Earnings</div><div class="stat__value">${S.formatPrice(totalEarnings)}</div></div>
       <div class="stat stat--prod"><div class="stat__icon">📦</div>
         <div class="stat__label">Your Active Listings</div><div class="stat__value">${myProducts.length}</div></div>
       <div class="stat stat--ord"><div class="stat__icon">🧾</div>
-        <div class="stat__label">Orders Received</div><div class="stat__value">${mySales.length}</div></div>`;
+        <div class="stat__label">Orders Received</div><div class="stat__value">${myOrders.length}</div></div>`;
 
     const recent = myProducts.slice(0, 5);
     $("#sellerRecentProducts").innerHTML = recent.length
@@ -73,7 +96,7 @@
             <td>${p.images?.[0] ? `<img src="${escapeHTML(p.images[0])}" alt="">` : "—"}</td>
             <td><strong>${escapeHTML(p.title)}</strong></td>
             <td>${S.formatPrice(p.price)}</td>
-            <td>${p.stock}</td>
+            <td><span class="badge ${p.stock <= 2 ? 'badge--low' : 'badge--cat'}">${p.stock} in stock</span></td>
           </tr>`).join("")}</tbody>`
       : `<tbody><tr><td style="color:var(--muted)">You haven't posted any products yet. Click "Post New Item".</td></tr></tbody>`;
   }
@@ -81,7 +104,7 @@
   function renderMyProducts() {
     const table = $("#sellerProductsTable");
     if (!myProducts.length) {
-      table.innerHTML = `<tbody><tr><td style="color:var(--muted)">No products found.</td></tr></tbody>`;
+      table.innerHTML = `<tbody><tr><td style="color:var(--muted)">No products found. Click "Post New Item" above.</td></tr></tbody>`;
       return;
     }
     table.innerHTML = `<thead><tr><th>Image</th><th>Title</th><th>Category</th><th>Price</th><th>Stock</th><th>Actions</th></tr></thead>
@@ -102,24 +125,22 @@
   }
 
   function renderSellerOrders() {
-    const orders = JSON.parse(localStorage.getItem("ecom_orders")) || [];
-    const myProductIds = new Set(myProducts.map(p => p.id));
     const table = $("#sellerOrdersTable");
-    
-    const mySales = orders.filter(o => o.items.some(item => myProductIds.has(item.id)));
-    if (!mySales.length) {
-      table.innerHTML = `<tbody><tr><td style="color:var(--muted)">No customer orders for your items yet.</td></tr></tbody>`;
+    if (!myOrders.length) {
+      table.innerHTML = `<tbody><tr><td style="color:var(--muted)">No customer orders for your items yet. Orders will appear here automatically when placed.</td></tr></tbody>`;
       return;
     }
 
-    table.innerHTML = `<thead><tr><th>Order ID</th><th>Customer</th><th>Your Items Ordered</th><th>Status</th></tr></thead>
-      <tbody>${mySales.map(o => {
-        const matchingItems = o.items.filter(i => myProductIds.has(i.id));
+    const myProductIds = new Set(myProducts.map(p => p.id));
+    table.innerHTML = `<thead><tr><th>Order Date</th><th>Customer</th><th>Items Ordered</th><th>Status</th></tr></thead>
+      <tbody>${myOrders.map(o => {
+        const matchingItems = (o.items || []).filter(i => myProductIds.has(i.id));
+        const dateStr = o.created_at ? new Date(o.created_at).toLocaleDateString() : "Recent";
         return `<tr>
-          <td><strong>${o.id}</strong><br><small style="color:var(--muted)">${new Date(o.createdAt).toLocaleDateString()}</small></td>
-          <td>${escapeHTML(o.customer.name)}<br><small style="color:var(--muted)">${escapeHTML(o.customer.phone)} (${escapeHTML(o.customer.address)})</small></td>
+          <td><strong>${dateStr}</strong></td>
+          <td>${escapeHTML(o.customer?.name || o.customer_name || "Customer")} <br><small style="color:var(--muted)">${escapeHTML(o.customer?.phone || o.phone || "")}</small></td>
           <td>${matchingItems.map(i => `${escapeHTML(i.title)} (x${i.qty})`).join("<br>")}</td>
-          <td><span class="status-pill status-${o.status}">${o.status}</span></td>
+          <td><span class="status-pill status-${o.status || 'Pending'}">${o.status || 'Pending'}</span></td>
         </tr>`;
       }).join("")}</tbody>`;
   }
@@ -183,8 +204,7 @@
 
       if (id) {
         const existing = myProducts.find(x => x.id === id);
-        if (!existing) throw new Error("This listing could not be found. Refresh and try again.");
-        let imageUrls = existing.images || [];
+        let imageUrls = existing?.images || [];
         if (files.length) {
           imageUrls = [];
           for (const file of files) {
@@ -192,15 +212,10 @@
           }
         }
         await S.saveProduct({
-          id,
-          title,
-          category,
-          price,
-          stock,
-          description,
+          id, title, category, price, stock, description,
           images: imageUrls,
-          discountPrice: existing.discountPrice,
-          specs: existing.specs
+          discountPrice: existing?.discountPrice || 0,
+          specs: existing?.specs || ""
         });
         S.toast("Product updated successfully ✅");
       } else {
