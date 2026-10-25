@@ -48,6 +48,7 @@
         }
         sessionStorage.setItem("ecom_admin_ok", "1");
         await unlock();
+        alert("dear user login successful!, Make sure to write your passcode down")
         S.toast("Welcome, Developer Moderator 🛡️");
       } catch (err) {
         console.error("Moderator dashboard unlock failed:", err);
