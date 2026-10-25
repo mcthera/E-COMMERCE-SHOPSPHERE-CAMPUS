@@ -327,7 +327,7 @@
     openModal("checkoutModal");
   }
 
-  function submitWhatsAppOrder(event) {
+  async function submitWhatsAppOrder(event) {
     event.preventDefault();
     const cart = S.getCart();
     if (!cart.length) {
@@ -341,27 +341,97 @@
       S.toast("Remove unavailable or out-of-stock items before checkout.", "error");
       return;
     }
+
     const form = $("#checkoutForm");
-    const data = new FormData(form);
+    const submitButton = form.querySelector('button[type="submit"]');
+    const formData = new FormData(form);
+    const customer = {
+      name: String(formData.get("name") || "").trim(),
+      phone: String(formData.get("phone") || "").trim(),
+      address: String(formData.get("address") || "").trim(),
+      className: String(formData.get("className") || "").trim(),
+      indexNumber: String(formData.get("indexNumber") || "").trim() || "Not provided"
+    };
+    const orderItems = cart.map((item) => {
+      const product = loadedProducts.find((entry) => entry.id === item.id);
+      return {
+        id: item.id,
+        title: product ? product.title : "Product",
+        price: product ? sellPrice(product) : 0,
+        qty: item.qty,
+        seller_id: product ? product.seller_id : null
+      };
+    });
+    const total = cartTotal();
     const message = [
-      "*New ShopSphere order*",
-      `Name: ${data.get("name")}`,
-      `Phone: ${data.get("phone")}`,
-      `Delivery address: ${data.get("address")}, ${data.get("city")}${data.get("region") ? `, ${data.get("region")}` : ""}`,
+      "*New ShopSphere Campus Order* 🛒",
+      `Name: ${customer.name}`,
+      `Phone: ${customer.phone}`,
+      `Class: ${customer.className}`,
+      `Index Number: ${customer.indexNumber}`,
+      `Location: ${customer.address}`,
       "",
-      "*Items:*",
-      ...cart.map((item) => {
-        const product = loadedProducts.find((entry) => entry.id === item.id);
-        return product
-          ? `${product.title} x${item.qty} — ${S.formatPrice(sellPrice(product) * item.qty)}`
-          : `Unavailable item x${item.qty}`;
-      }),
+      "*Items Ordered:*",
+      ...orderItems.map((item) => `• ${item.title} (x${item.qty}) — ${S.formatPrice(item.price * item.qty)}`),
       "",
-      `*Total: ${S.formatPrice(cartTotal())}*`,
+      `*Total: ${S.formatPrice(total)}*`,
     ].join("\n");
+
+    const newOrder = {
+      id: `ORD-${Math.floor(100000 + Math.random() * 900000)}`,
+      customer,
+      items: orderItems,
+      status: "Pending",
+      created_at: new Date().toISOString()
+    };
+    const updatedProducts = [];
+    submitButton.disabled = true;
+
+    try {
+      for (const item of cart) {
+        const product = loadedProducts.find((entry) => entry.id === item.id);
+        if (!product || product.stock < item.qty) {
+          throw new Error("Stock changed while checking out. Review your cart and try again.");
+        }
+        await S.saveProduct({ ...product, stock: Math.max(0, product.stock - item.qty) });
+        updatedProducts.push(product);
+      }
+
+      let existingOrders = [];
+      const storedOrders = localStorage.getItem("ecom_orders");
+      if (storedOrders) {
+        existingOrders = JSON.parse(storedOrders);
+        if (!Array.isArray(existingOrders)) throw new Error("Saved order history is invalid.");
+      }
+      localStorage.setItem("ecom_orders", JSON.stringify([newOrder, ...existingOrders]));
+    } catch (err) {
+      const rollbackErrors = [];
+      for (const product of updatedProducts.reverse()) {
+        try {
+          await S.saveProduct(product);
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError.message);
+        }
+      }
+      const detail = rollbackErrors.length
+        ? ` Stock rollback also failed: ${rollbackErrors.join("; ")}.`
+        : "";
+      S.toast(`${err.message || "Could not process order"}${detail}`, "error");
+      submitButton.disabled = false;
+      return;
+    }
+
+    localStorage.removeItem("ecom_cart");
+    updateCartCount();
+    renderCart();
+    closeModal("checkoutModal");
+    closeDrawer("cartDrawer");
+
     const url = `https://wa.me/233597787700?text=${encodeURIComponent(message)}`;
     window.open(url, "_blank", "noopener,noreferrer");
-    closeModal("checkoutModal");
+    S.toast("Order sent! Cart cleared & stock updated 📦");
+    await fetchAndRenderProducts();
+    submitButton.disabled = false;
   }
 
   function openDrawer(id) {
@@ -423,15 +493,22 @@
       $("#signUpFields").classList.toggle("hidden", !isSignUp);
       $("#authName").required = isSignUp;
       $("#authPhone").required = isSignUp;
-      $("#authTitle").textContent = isSignUp ? "Create seller account" : "Sign in";
+      $("#authTitle").textContent = isSignUp ? "Create student account" : "Student Sign in";
       $("#authSubmitBtn").textContent = isSignUp ? "Create account" : "Sign in";
       $("#authToggleText").textContent = isSignUp ? "Already have an account?" : "Don't have an account?";
+      $("#authEmail").placeholder = isSignUp ? "Enter the phone number used below" : "Enter your phone or name";
+      $("#identifierLabel").textContent = isSignUp ? "Phone number *" : "Phone number or Name *";
+      if (isSignUp) $("#authEmail").value = $("#authPhone").value;
       $("#authPassword").autocomplete = isSignUp ? "new-password" : "current-password";
+    });
+
+    $("#authPhone").addEventListener("input", () => {
+      if (isSignUp) $("#authEmail").value = $("#authPhone").value;
     });
 
     $("#authForm").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const email = $("#authEmail").value.trim();
+      const identifier = $("#authEmail").value.trim();
       const pass = $("#authPassword").value;
       const submitButton = $("#authSubmitBtn");
       submitButton.disabled = true;
@@ -439,15 +516,17 @@
         if (isSignUp) {
           const name = $("#authName").value.trim();
           const phone = $("#authPhone").value.trim();
-          const result = await S.signUp(email, pass, name, phone);
+          const result = await S.signUp(identifier, pass, name, phone);
           isSignUp = false;
           $("#signUpFields").classList.add("hidden");
           $("#authName").required = false;
           $("#authPhone").required = false;
-          $("#authTitle").textContent = "Sign in";
+          $("#authTitle").textContent = "Student Sign in";
           $("#authSubmitBtn").textContent = "Sign in";
           $("#authToggleLink").textContent = "Sign up";
           $("#authToggleText").textContent = "Don't have an account?";
+          $("#authEmail").placeholder = "Enter your phone or name";
+          $("#identifierLabel").textContent = "Phone number or Name *";
           $("#authPassword").autocomplete = "current-password";
           if (result.session) {
             currentUser = await S.getCurrentUser();
@@ -457,10 +536,10 @@
             S.toast("Account created and signed in successfully!");
           } else {
             $("#authForm").reset();
-            S.toast("Account created. Check your email to confirm it, then sign in.");
+            S.toast("Account created, but campus-phone sign-in requires email confirmation to be disabled in Supabase Auth.", "error", 7000);
           }
         } else {
-          await S.signIn(email, pass);
+          await S.signIn(identifier, pass);
           S.toast("Welcome back! 🎉");
           location.reload();
         }

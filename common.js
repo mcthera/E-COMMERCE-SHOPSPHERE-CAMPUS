@@ -56,26 +56,62 @@
     });
   }
 
-  // --- AUTHENTICATION ---
-  async function signUp(email, password, fullName, phone) {
+  // --- AUTHENTICATION (Campus Phone & Index Number) ---
+  async function signUp(identifier, indexNumber, fullName, phone) {
+    const signupPhone = phone.trim() || identifier.trim();
+    const cleanPhone = signupPhone.replace(/[^0-9]/g, "");
+    if (!cleanPhone) throw new Error("Enter a valid phone number.");
+    const internalEmail = `${cleanPhone}@campus.shopsphere`;
     const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { full_name: fullName, phone_whatsapp: phone } }
+      email: internalEmail,
+      password: indexNumber,
+      options: { data: { full_name: fullName, phone_whatsapp: signupPhone } }
     });
     if (error) throw error;
 
     if (data.user) {
       const { error: profileError } = await supabase.from("profiles").upsert([
-        { id: data.user.id, full_name: fullName, phone_whatsapp: phone }
+        { id: data.user.id, full_name: fullName, phone_whatsapp: signupPhone }
       ]);
       if (profileError) throw profileError;
     }
     return data;
   }
 
-  async function signIn(email, password) {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  async function signIn(identifier, indexNumber) {
+    const entered = identifier.trim();
+    const cleanPhone = entered.replace(/[^0-9]/g, "");
+    const isPhone = /^[+\d\s()-]+$/.test(entered) && cleanPhone.length > 5;
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entered);
+    let internalEmail;
+
+    if (isEmail) {
+      internalEmail = entered.toLowerCase();
+    } else if (isPhone) {
+      internalEmail = `${cleanPhone}@campus.shopsphere`;
+    } else {
+      const escapedName = entered.replace(/[\\%_]/g, "\\$&");
+      const { data: profiles, error: profileError } = await supabase
+        .from("profiles")
+        .select("phone_whatsapp")
+        .ilike("full_name", escapedName)
+        .limit(2);
+      if (profileError) throw profileError;
+      if (profiles.length > 1) {
+        throw new Error("More than one student uses that name. Sign in with your phone number.");
+      }
+      if (!profiles.length || !profiles[0].phone_whatsapp) {
+        throw new Error("No student account found with that name.");
+      }
+      const profilePhone = profiles[0].phone_whatsapp.replace(/[^0-9]/g, "");
+      if (!profilePhone) throw new Error("That account has no valid phone number. Contact support.");
+      internalEmail = `${profilePhone}@campus.shopsphere`;
+    }
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: internalEmail,
+      password: indexNumber
+    });
     if (error) throw error;
     return data;
   }

@@ -174,10 +174,10 @@
         <form id="checkoutForm">
           <div class="field"><label for="checkoutName">Full name *</label><input id="checkoutName" name="name" autocomplete="name" required /></div>
           <div class="field"><label for="checkoutPhone">Phone *</label><input id="checkoutPhone" name="phone" type="tel" autocomplete="tel" required /></div>
-          <div class="field"><label for="checkoutAddress">Delivery address or hostel *</label><textarea id="checkoutAddress" name="address" autocomplete="street-address" required></textarea></div>
+          <div class="field"><label for="checkoutAddress">Hostel / Hall / Delivery Location *</label><textarea id="checkoutAddress" name="address" required></textarea></div>
           <div class="grid-2">
-            <div class="field"><label for="checkoutCity">City *</label><input id="checkoutCity" name="city" autocomplete="address-level2" required /></div>
-            <div class="field"><label for="checkoutRegion">Region</label><input id="checkoutRegion" name="region" autocomplete="address-level1" /></div>
+            <div class="field"><label for="checkoutClass">Class Name *</label><input id="checkoutClass" name="className" placeholder="e.g. BSc IT 1A" required /></div>
+            <div class="field"><label for="checkoutIndex">Index Number (Optional)</label><input id="checkoutIndex" name="indexNumber" placeholder="e.g. UEB0000000" /></div>
           </div>
           <div id="checkoutSummary"></div>
           <button type="submit" class="btn btn--primary btn--block">Send order on WhatsApp</button>
@@ -188,22 +188,22 @@
  
   <div class="modal" id="authModal">
     <div class="modal__panel modal__panel--sm">
-      <div class="modal__head"><h3 id="authTitle">Sign in</h3><button class="close-x" data-close-modal="authModal" aria-label="Close">×</button></div>
+      <div class="modal__head"><h3 id="authTitle">Student Sign in</h3><button class="close-x" data-close-modal="authModal" aria-label="Close">×</button></div>
       <div class="modal__body">
         <form id="authForm">
           <div class="field hidden" id="signUpFields">
-            <label for="authName">Full name (seller name) *</label>
-            <input type="text" id="authName" placeholder="e.g. Kwadwo Tech Store" autocomplete="name" />
-            <label for="authPhone" style="margin-top:10px">WhatsApp / phone number *</label>
-            <input type="tel" id="authPhone" placeholder="e.g. 233597787700" autocomplete="tel" />
+            <label for="authName">Full name *</label>
+            <input type="text" id="authName" placeholder="e.g. Kwadwo Manu" autocomplete="name" />
+            <label for="authPhone" style="margin-top:10px">WhatsApp / Phone number *</label>
+            <input type="tel" id="authPhone" placeholder="e.g. 0597787700" autocomplete="tel" />
           </div>
           <div class="field">
-            <label for="authEmail">Email address *</label>
-            <input type="email" id="authEmail" autocomplete="email" required />
+            <label for="authEmail" id="identifierLabel">Phone number or Name *</label>
+            <input type="text" id="authEmail" placeholder="Enter your phone or name" autocomplete="username" required />
           </div>
           <div class="field">
-            <label for="authPassword">Password *</label>
-            <input type="password" id="authPassword" autocomplete="current-password" required />
+            <label for="authPassword" id="passLabel">Index Number *</label>
+            <input type="password" id="authPassword" placeholder="Enter your index number" autocomplete="current-password" required />
           </div>
           <button type="submit" class="btn btn--primary btn--block" id="authSubmitBtn">Sign in</button>
         </form>

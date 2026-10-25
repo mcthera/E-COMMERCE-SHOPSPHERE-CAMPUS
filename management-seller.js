@@ -46,13 +46,20 @@
       const allProducts = await S.getProducts();
       myProducts = allProducts.filter((p) => p.seller_id === currentUser.id);
 
-      // Fetch orders from Supabase (or fallback to local storage)
+      // Merge browser-saved checkout orders with persisted Supabase orders.
       const { data: ordersData, error } = await supabase
         .from("orders")
         .select("*")
         .order("created_at", { ascending: false });
-
-      const allOrders = error || !ordersData ? JSON.parse(localStorage.getItem("ecom_orders")) || [] : ordersData;
+      if (error) console.warn("Could not load Supabase orders; showing browser-saved orders:", error);
+      const savedOrders = JSON.parse(localStorage.getItem("ecom_orders") || "[]");
+      if (!Array.isArray(savedOrders)) throw new Error("Saved order history is invalid.");
+      const remoteOrders = error || !Array.isArray(ordersData) ? [] : ordersData;
+      const remoteOrderIds = new Set(remoteOrders.map((order) => order.id));
+      const allOrders = [
+        ...remoteOrders,
+        ...savedOrders.filter((order) => !remoteOrderIds.has(order.id))
+      ];
 
       // Filter orders containing items belonging to this specific logged-in seller
       const myProductIds = new Set(myProducts.map(p => p.id));
