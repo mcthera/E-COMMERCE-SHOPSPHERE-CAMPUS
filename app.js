@@ -34,7 +34,8 @@
 
   async function init() {
     $("#year").textContent = new Date().getFullYear();
-    $("#currencySel").value = S.getCurrency();
+    const currencySelect = $("#currencySel");
+    if (currencySelect) currencySelect.value = S.getCurrency();
 
     updateAuthUI();
     buildCarousel();
@@ -594,15 +595,18 @@
       renderProducts();
     });
 
-    $("#currencySel").addEventListener("change", (event) => {
-      try {
-        S.setCurrency(event.target.value);
-        renderProducts();
-        renderCart();
-      } catch (err) {
-        S.toast(err.message, "error");
-      }
-    });
+    const currencySelect = $("#currencySel");
+    if (currencySelect) {
+      currencySelect.addEventListener("change", (event) => {
+        try {
+          S.setCurrency(event.target.value);
+          renderProducts();
+          renderCart();
+        } catch (err) {
+          S.toast(err.message, "error");
+        }
+      });
+    }
 
     $("#btnCart").addEventListener("click", openCart);
     $("#checkoutForm").addEventListener("submit", submitWhatsAppOrder);
