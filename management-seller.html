@@ -6,17 +6,29 @@
   <title>ShopSphere — Seller Dashboard</title>
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>store</text></svg>" />
 </head>
 <body>
 
-  <!-- Auth Gate / Loading Check -->
+  <!-- Auth Gate / Seller Login Screen -->
   <div class="login-wrap" id="sellerAuthGate">
     <div class="login-card">
       <div class="logo"><span class="logo__mark">S</span><span><b>Shop</b><em>Sphere</em></span></div>
-      <h2 style="margin:6px 0">Seller Portal</h2>
-      <p style="color:var(--muted);margin-bottom:16px">Please log in to your seller account to manage your store.</p>
-      <a href="index.html" class="btn btn--primary btn--block">Go to Store & Login</a>
+      <h2 style="margin:6px 0">Seller Portal Login</h2>
+      <p style="color:var(--muted);margin-bottom:16px">Log in with your seller account credentials to access your store.</p>
+      
+      <form id="sellerLoginForm" style="text-align: left; margin-bottom: 12px;">
+        <div class="field">
+          <label for="sellerLoginUser">Email address</label>
+          <input type="email" id="sellerLoginUser" placeholder="Enter your email address" autocomplete="email" required />
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input type="password" id="sellerLoginPass" placeholder="Enter password" required />
+        </div>
+        <button type="submit" class="btn btn--primary btn--block">Login as Seller</button>
+      </form>
+      <a href="index.html?signup=seller" class="btn btn--ghost btn--block">Register as a new seller</a>
+      <a href="index.html" class="btn btn--ghost btn--block">← Back to Shopping Home Page</a>
     </div>
   </div>
 
@@ -25,12 +37,12 @@
     <aside class="admin-side" id="sellerSide">
       <div class="logo"><span class="logo__mark">S</span><span><b>My</b>Store</span></div>
       <nav class="admin-nav">
-        <button data-view="dashboard" class="active">📊 My Dashboard</button>
+        <button data-view="dashboard" class="active">📊 Dashboard</button>
         <button data-view="products">📦 My Listings</button>
         <button data-view="orders">🧾 Sales & Orders</button>
       </nav>
       <div style="margin-top:24px;border-top:1px solid rgba(255,255,255,.1);padding-top:16px">
-        <a href="index.html" class="admin-nav" style="display:block"><button>🏬 View Marketplace</button></a>
+        <a href="index.html" class="admin-nav" style="display:block"><button>🏬 Shopping Home Page</button></a>
         <button id="btnSellerLogout" class="admin-nav" style="width:100%;color:#ffb4b4">🚪 Logout</button>
       </div>
     </aside>
@@ -39,32 +51,33 @@
       <div class="admin-topbar">
         <div style="display:flex;align-items:center;gap:10px">
           <button class="hamburger admin-menu-btn" id="btnSellerMenu">☰</button>
-          <h1 id="sellerViewTitle">Dashboard</h1>
+          <h1 id="sellerViewTitle">Seller Dashboard</h1>
         </div>
         <button class="btn btn--primary" id="btnNewListing">＋ Post New Item</button>
       </div>
 
-      <!-- Dashboard View -->
+      <div id="sellerStatusBanner" class="panel hidden" style="background: #fef3c7; border: 1px solid #f59e0b;">
+        <strong style="color: #b45309;">⚠️ Account Pending Approval:</strong> Your seller account is currently under moderator review. You will be able to post listings once approved.
+      </div>
+
       <section id="view-dashboard">
         <div class="stats" id="sellerStatCards"></div>
         <div class="panel">
-          <h3>📦 Your Recent Listings</h3>
+          <h3>📦 Your Active Listings</h3>
           <div class="table-wrap"><table class="data" id="sellerRecentProducts"></table></div>
         </div>
       </section>
 
-      <!-- Products View -->
       <section id="view-products" class="hidden">
         <div class="panel">
-          <h3>Manage Your Products</h3>
+          <h3>Manage Your Listings</h3>
           <div class="table-wrap"><table class="data" id="sellerProductsTable"></table></div>
         </div>
       </section>
 
-      <!-- Orders / Sales View -->
       <section id="view-orders" class="hidden">
         <div class="panel">
-          <h3>Orders for Your Items</h3>
+          <h3>Customer Orders & Status Tracking</h3>
           <div class="table-wrap"><table class="data" id="sellerOrdersTable"></table></div>
         </div>
       </section>
@@ -87,10 +100,10 @@
             <div class="field"><label>Price (GH₵) *</label><input id="spPrice" type="number" min="0" step="0.01" required /></div>
             <div class="field"><label>Stock Quantity *</label><input id="spStock" type="number" min="1" value="1" required /></div>
           </div>
-          <div class="field"><label>Description</label><textarea id="spDesc" placeholder="Condition, location on campus, details..."></textarea></div>
+          <div class="field"><label>Description</label><textarea id="spDesc" placeholder="Condition, location..."></textarea></div>
           <div class="field">
             <label>Product Photos *</label>
-            <input type="file" id="spFileInput" accept="image/*" multiple />
+            <input type="file" id="spFileInput" accept="image/*" multiple required />
           </div>
           <div style="display:flex;gap:10px;margin-top:16px">
             <button type="submit" class="btn btn--green" id="btnSaveListing">💾 Save Listing</button>

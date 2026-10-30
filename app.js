@@ -3,6 +3,8 @@
   const S = window.Store;
   let currentUser = null;
   let loadedProducts = [];
+  let authMode = "signin";
+  let authRole = "customer";
 
   const state = {
     activeCategory: "All",
@@ -26,25 +28,35 @@
 
   const SLIDES = [
     { title: "Buy and sell on campus", sub: "Textbooks, gadgets, fashion and room essentials from students you can meet today.", tone: "crimson", art: "🎓", cta: "Browse items" },
-    { title: "Got something to sell?", sub: "Open the menu, tap Sell an item and reach buyers on WhatsApp in minutes.", tone: "deep", art: "📱", cta: "See what's listed", cat: "Mobile" },
+    { title: "Got something to sell?", sub: "Open the menu, tap Become a Seller and reach buyers on WhatsApp in minutes.", tone: "deep", art: "📱", cta: "See what's listed", cat: "Mobile" },
     { title: "Hostel shopping sorted", sub: "Fans, kettles, bedding and more at student-friendly prices.", tone: "bright", art: "🛏️", cta: "Shop home items", cat: "Home" },
   ];
 
   async function init() {
     $("#year").textContent = new Date().getFullYear();
     $("#currencySel").value = S.getCurrency();
+
     updateAuthUI();
     buildCarousel();
     buildCategories();
     updateCartCount();
     wireEvents();
 
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("signup") === "seller") {
+      $("#gatewayModal").classList.remove("open");
+      openSellerAuthModal();
+      query.delete("signup");
+      const remainingQuery = query.toString();
+      history.replaceState(null, "", `${location.pathname}${remainingQuery ? `?${remainingQuery}` : ""}${location.hash}`);
+    }
+
     try {
       currentUser = await S.getCurrentUser();
       updateAuthUI();
     } catch (err) {
       console.error("Could not restore sign-in state:", err);
-      S.toast(`Could not verify your account: ${err.message}`, "error", 6000);
+      S.toast(`Could not restore your Supabase session: ${err.message}`, "error", 6000);
     }
     await fetchAndRenderProducts();
   }
@@ -65,7 +77,6 @@
     $("#carPrev").addEventListener("click", () => goToSlide(state.carouselIndex - 1));
     $("#carNext").addEventListener("click", () => goToSlide(state.carouselIndex + 1));
 
-    // swipe support for phones
     let touchX = null;
     const carousel = $("#carousel");
     carousel.addEventListener("touchstart", (e) => { touchX = e.touches[0].clientX; }, { passive: true });
@@ -89,9 +100,9 @@
 
   function updateAuthUI() {
     const name = currentUser ? (currentUser.profile?.full_name || currentUser.email || "Account") : "";
-    $("#authLabel").textContent = currentUser ? "Log out" : "Login / Sign up";
+    $("#authLabel").textContent = currentUser ? "Log out" : "Customer Sign in";
     $("#drawerUserName").textContent = currentUser ? name : "Welcome";
-    $("#drawerUserSub").textContent = currentUser ? "Signed in as a seller" : "Sign in to sell on campus";
+    $("#drawerUserSub").textContent = currentUser ? `Role: ${currentUser.profile?.role || "Customer"}` : "Sign in to ShopSphere";
     $("#drawerAvatar").textContent = currentUser ? name.trim().charAt(0).toUpperCase() || "S" : "S";
   }
 
@@ -139,7 +150,6 @@
       console.error("Could not load products:", err);
       loadedProducts = [];
       renderProducts();
-      S.toast(`Could not load products: ${err.message}`, "error", 6000);
     }
   }
 
@@ -263,9 +273,9 @@
           <h4>${escapeHTML(product.title)}</h4>
           <div>${S.formatPrice(sellPrice(product))}</div>
           <div class="qty" style="margin-top:6px">
-            <button type="button" data-dec="${product.id}" aria-label="Decrease quantity">−</button>
+            <button type="button" data-dec="${product.id}">−</button>
             <span>${item.qty}</span>
-            <button type="button" data-inc="${product.id}" aria-label="Increase quantity">+</button>
+            <button type="button" data-inc="${product.id}">+</button>
           </div>
           <div><button type="button" class="link-remove" data-rem="${product.id}">Remove</button></div>
         </div>
@@ -315,11 +325,13 @@
       S.toast("Your cart is empty.", "error");
       return;
     }
-    if (cart.some((item) => {
-      const product = loadedProducts.find((entry) => entry.id === item.id);
-      return !product || product.stock < item.qty;
-    })) {
-      S.toast("Remove unavailable or out-of-stock items before checkout.", "error");
+    if (!currentUser || currentUser.profile?.role !== "customer") {
+      S.toast("Sign in with a customer account before checking out.", "error");
+      closeDrawer("cartDrawer");
+      if (!currentUser) {
+        setAuthMode("signin", "customer");
+        openModal("authModal");
+      }
       return;
     }
     $("#checkoutSummary").innerHTML = `<div class="cart-summary-row total"><span>Total</span><span>${S.formatPrice(cartTotal())}</span></div>`;
@@ -330,17 +342,7 @@
   async function submitWhatsAppOrder(event) {
     event.preventDefault();
     const cart = S.getCart();
-    if (!cart.length) {
-      S.toast("Your cart is empty.", "error");
-      return;
-    }
-    if (cart.some((item) => {
-      const product = loadedProducts.find((entry) => entry.id === item.id);
-      return !product || product.stock < item.qty;
-    })) {
-      S.toast("Remove unavailable or out-of-stock items before checkout.", "error");
-      return;
-    }
+    if (!cart.length) return;
 
     const form = $("#checkoutForm");
     const submitButton = form.querySelector('button[type="submit"]');
@@ -352,86 +354,77 @@
       className: String(formData.get("className") || "").trim(),
       indexNumber: String(formData.get("indexNumber") || "").trim() || "Not provided"
     };
-    const orderItems = cart.map((item) => {
-      const product = loadedProducts.find((entry) => entry.id === item.id);
-      return {
-        id: item.id,
-        title: product ? product.title : "Product",
-        price: product ? sellPrice(product) : 0,
-        qty: item.qty,
-        seller_id: product ? product.seller_id : null
-      };
-    });
-    const total = cartTotal();
-    const message = [
-      "*New ShopSphere Campus Order* 🛒",
-      `Name: ${customer.name}`,
-      `Phone: ${customer.phone}`,
-      `Class: ${customer.className}`,
-      `Index Number: ${customer.indexNumber}`,
-      `Location: ${customer.address}`,
-      "",
-      "*Items Ordered:*",
-      ...orderItems.map((item) => `• ${item.title} (x${item.qty}) — ${S.formatPrice(item.price * item.qty)}`),
-      "",
-      `*Total: ${S.formatPrice(total)}*`,
-    ].join("\n");
-
-    const newOrder = {
-      id: `ORD-${Math.floor(100000 + Math.random() * 900000)}`,
-      customer,
-      items: orderItems,
-      status: "Pending",
-      created_at: new Date().toISOString()
-    };
-    const updatedProducts = [];
     submitButton.disabled = true;
+    const whatsappWindow = window.open("about:blank", "_blank");
 
     try {
-      for (const item of cart) {
-        const product = loadedProducts.find((entry) => entry.id === item.id);
-        if (!product || product.stock < item.qty) {
-          throw new Error("Stock changed while checking out. Review your cart and try again.");
-        }
-        await S.saveProduct({ ...product, stock: Math.max(0, product.stock - item.qty) });
-        updatedProducts.push(product);
-      }
+      const order = await S.createOrder(customer, cart);
+      const message = [
+        "*New ShopSphere Campus Order* 🛒",
+        `Order Reference ID: *${order.reference}*`,
+        `Name: ${customer.name}`,
+        `Phone: ${customer.phone}`,
+        `Class: ${customer.className}`,
+        `Index Number: ${customer.indexNumber}`,
+        `Location: ${customer.address}`,
+        "",
+        "*Items Ordered:*",
+        ...(order.items || []).map((item) => `• ${item.title} (x${item.qty}) — ${S.formatPrice(item.price * item.qty)}`),
+        "",
+        `*Total: ${S.formatPrice(order.total)}*`,
+      ].join("\n");
 
-      let existingOrders = [];
-      const storedOrders = localStorage.getItem("ecom_orders");
-      if (storedOrders) {
-        existingOrders = JSON.parse(storedOrders);
-        if (!Array.isArray(existingOrders)) throw new Error("Saved order history is invalid.");
-      }
-      localStorage.setItem("ecom_orders", JSON.stringify([newOrder, ...existingOrders]));
+      S.saveCart([]);
+      updateCartCount();
+      renderCart();
+      closeModal("checkoutModal");
+      closeDrawer("cartDrawer");
+      const url = `https://wa.me/233597787700?text=${encodeURIComponent(message)}`;
+      if (whatsappWindow) whatsappWindow.location.href = url;
+      else S.toast("Order saved. Allow pop-ups to open WhatsApp and send it to the store.", "info", 7000);
+      S.toast(`Order saved! Reference: ${order.reference}. Use it to track your order.`, "success", 7000);
+      await fetchAndRenderProducts();
     } catch (err) {
-      const rollbackErrors = [];
-      for (const product of updatedProducts.reverse()) {
-        try {
-          await S.saveProduct(product);
-        } catch (rollbackError) {
-          rollbackErrors.push(rollbackError.message);
-        }
-      }
-      const detail = rollbackErrors.length
-        ? ` Stock rollback also failed: ${rollbackErrors.join("; ")}.`
-        : "";
-      S.toast(`${err.message || "Could not process order"}${detail}`, "error");
+      if (whatsappWindow) whatsappWindow.close();
+      S.toast(err.message || "Could not save your order to Supabase.", "error", 7000);
+    } finally {
       submitButton.disabled = false;
+    }
+  }
+
+  async function handleOrderTracking(e) {
+    e.preventDefault();
+    const query = $("#trackInput").value.trim();
+    const container = $("#trackResult");
+    if (!currentUser) {
+      S.toast("Sign in with your customer account to track an order.", "error");
+      setAuthMode("signin", "customer");
+      openModal("authModal");
       return;
     }
-
-    localStorage.removeItem("ecom_cart");
-    updateCartCount();
-    renderCart();
-    closeModal("checkoutModal");
-    closeDrawer("cartDrawer");
-
-    const url = `https://wa.me/233597787700?text=${encodeURIComponent(message)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
-    S.toast("Order sent! Cart cleared & stock updated 📦");
-    await fetchAndRenderProducts();
-    submitButton.disabled = false;
+    container.textContent = "Looking up your order…";
+    try {
+      const order = await S.getOrder(query);
+      if (!order) {
+        container.textContent = "No order found. Check the reference and make sure you are signed in to the account that placed it.";
+        return;
+      }
+      container.innerHTML = `
+      <div style="border: 1px solid var(--line); padding: 12px; border-radius: 10px; margin-bottom: 10px; background: var(--bg);">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong>Order: ${escapeHTML(order.reference)}</strong>
+          <span class="status-pill status-${escapeHTML(order.status)}">${escapeHTML(order.status)}</span>
+        </div>
+        <p style="font-size:0.85rem; color:var(--muted); margin-top:4px;">Date: ${new Date(order.created_at).toLocaleDateString()}</p>
+        <div style="margin-top:6px; font-size:0.88rem;">
+          ${(order.items || []).map((item) => `<div>• ${escapeHTML(item.title)} (x${item.qty})</div>`).join("")}
+        </div>
+      </div>
+      `;
+    } catch (err) {
+      console.error("Could not track order:", err);
+      container.textContent = err.message || "Could not look up this order.";
+    }
   }
 
   function openDrawer(id) {
@@ -459,89 +452,120 @@
     $("#overlay").classList.remove("open");
   }
 
+  function openSellerAuthModal() {
+    $("#gatewayModal").classList.remove("open");
+    setAuthMode("signup", "seller");
+    openModal("authModal");
+  }
+
+  function setAuthMode(mode, role) {
+    authMode = mode;
+    authRole = role;
+    const isSignUp = mode === "signup";
+    $("#authToggleLink").textContent = isSignUp ? "Sign in" : "Sign up";
+    $("#signUpFields").classList.toggle("hidden", !isSignUp);
+    $("#authName").required = isSignUp;
+    $("#authPhone").required = isSignUp;
+    $("#authTitle").textContent = isSignUp
+      ? role === "seller" ? "Seller Account Registration" : "Create Customer Account"
+      : role === "seller" ? "Seller Sign in" : "Customer Sign in";
+    $("#authToggleText").textContent = isSignUp ? "Already have an account?" : "Don't have an account?";
+    $("#authRole").value = role;
+    $("#authSubmitBtn").textContent = isSignUp
+      ? role === "seller" ? "Register as Seller" : "Create Account"
+      : "Sign in";
+    $("#authPassword").autocomplete = isSignUp ? "new-password" : "current-password";
+  }
+
   function wireEvents() {
-    let isSignUp = false;
+    // Gateway choices
+    $("#btnGatewayBuyer").addEventListener("click", () => {
+      $("#gatewayModal").classList.remove("open");
+      $("#overlay").classList.remove("open");
+    });
+
+    $("#btnGatewaySeller").addEventListener("click", () => {
+      window.location.href = "management-seller.html";
+    });
+
+    // Seller Prompts
+    $("#btnBannerSellerSignUp").addEventListener("click", openSellerAuthModal);
+    $("#btnSellerSignupPrompt").addEventListener("click", () => {
+      closeDrawer("mobileDrawer");
+      openSellerAuthModal();
+    });
+
+    // Tracking
+    $("#btnTrackOrder").addEventListener("click", () => openModal("trackModal"));
+    $("#btnDrawerTrack").addEventListener("click", () => {
+      closeDrawer("mobileDrawer");
+      openModal("trackModal");
+    });
+    $("#trackForm").addEventListener("submit", handleOrderTracking);
+
     $("#btnAuth").addEventListener("click", async () => {
       closeDrawer("mobileDrawer");
-      if (!currentUser) {
-        try {
-          currentUser = await S.getCurrentUser();
-          updateAuthUI();
-        } catch (err) {
-          console.error("Could not verify sign-in state:", err);
-          S.toast(`Could not verify your account: ${err.message}`, "error");
-        }
-      }
       if (currentUser) {
         if (confirm(`Logged in as ${currentUser.profile?.full_name || currentUser.email}. Log out?`)) {
           try {
             await S.signOut();
             location.reload();
           } catch (err) {
-            S.toast(`Could not sign out: ${err.message}`, "error");
+            S.toast(err.message || "Could not sign out.", "error");
           }
         }
       } else {
+        setAuthMode("signin", "customer");
         openModal("authModal");
       }
     });
 
     $("#authToggleLink").addEventListener("click", (e) => {
       e.preventDefault();
-      isSignUp = !isSignUp;
-      $("#authToggleLink").textContent = isSignUp ? "Sign in" : "Sign up";
-      $("#signUpFields").classList.toggle("hidden", !isSignUp);
-      $("#authName").required = isSignUp;
-      $("#authPhone").required = isSignUp;
-      $("#authTitle").textContent = isSignUp ? "Create student account" : "Student Sign in";
-      $("#authSubmitBtn").textContent = isSignUp ? "Create account" : "Sign in";
-      $("#authToggleText").textContent = isSignUp ? "Already have an account?" : "Don't have an account?";
-      $("#authEmail").placeholder = isSignUp ? "Enter the phone number used below" : "Enter your phone or name";
-      $("#identifierLabel").textContent = isSignUp ? "Phone number *" : "Phone number or Name *";
-      if (isSignUp) $("#authEmail").value = $("#authPhone").value;
-      $("#authPassword").autocomplete = isSignUp ? "new-password" : "current-password";
-    });
-
-    $("#authPhone").addEventListener("input", () => {
-      if (isSignUp) $("#authEmail").value = $("#authPhone").value;
+      setAuthMode(authMode === "signup" ? "signin" : "signup", authRole);
     });
 
     $("#authForm").addEventListener("submit", async (e) => {
       e.preventDefault();
       const identifier = $("#authEmail").value.trim();
       const pass = $("#authPassword").value;
+      const role = authRole;
       const submitButton = $("#authSubmitBtn");
       submitButton.disabled = true;
+
       try {
-        if (isSignUp) {
+        if (authMode === "signup") {
           const name = $("#authName").value.trim();
           const phone = $("#authPhone").value.trim();
-          const result = await S.signUp(identifier, pass, name, phone);
-          isSignUp = false;
-          $("#signUpFields").classList.add("hidden");
-          $("#authName").required = false;
-          $("#authPhone").required = false;
-          $("#authTitle").textContent = "Student Sign in";
-          $("#authSubmitBtn").textContent = "Sign in";
-          $("#authToggleLink").textContent = "Sign up";
-          $("#authToggleText").textContent = "Don't have an account?";
-          $("#authEmail").placeholder = "Enter your phone or name";
-          $("#identifierLabel").textContent = "Phone number or Name *";
-          $("#authPassword").autocomplete = "current-password";
-          if (result.session) {
-            currentUser = await S.getCurrentUser();
-            updateAuthUI();
-            $$(".modal").forEach((modal) => modal.classList.remove("open"));
-            $("#overlay").classList.remove("open");
-            S.toast("Account created and signed in successfully!");
-          } else {
-            $("#authForm").reset();
-            S.toast("Account created, but campus-phone sign-in requires email confirmation to be disabled in Supabase Auth.", "error", 7000);
+          const result = await S.signUp(identifier, pass, name, phone, role);
+          if (!result.session) {
+            closeAll();
+            S.toast("Account created. Verify your email before signing in.", "info", 8000);
+            return;
           }
+          currentUser = await S.getCurrentUser();
+          if (role === "seller") {
+            S.toast("Seller account created! It is pending moderator approval.", "info", 8000);
+            location.href = "management-seller.html";
+            return;
+          }
+          S.toast("Customer account created!");
+          updateAuthUI();
+          closeAll();
         } else {
           await S.signIn(identifier, pass);
+          currentUser = await S.getCurrentUser();
+          if (currentUser.profile.role === "seller") {
+            location.href = "management-seller.html";
+            return;
+          }
+          if (currentUser.profile.role === "moderator") {
+            location.href = "admin.html";
+            return;
+          }
           S.toast("Welcome back! 🎉");
-          location.reload();
+          updateAuthUI();
+          closeAll();
         }
       } catch (err) {
         S.toast(err.message, "error");
@@ -550,75 +574,9 @@
       }
     });
 
-    $("#btnSell").addEventListener("click", async () => {
-      closeDrawer("mobileDrawer");
-      if (!currentUser) {
-        try {
-          currentUser = await S.getCurrentUser();
-          updateAuthUI();
-        } catch (err) {
-          S.toast(`Could not verify your account: ${err.message}`, "error");
-          return;
-        }
-      }
-      if (!currentUser) {
-        S.toast("Please log in first to post items for sale.", "error");
-        openModal("authModal");
-        return;
-      }
-      populateCategorySelects();
-      openModal("sellModal");
-    });
-
-    function populateCategorySelects() {
-      $("#sellCategory").innerHTML = S.CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join("");
-    }
-
-    $("#sellForm").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const files = [...$("#sellFileInput").files];
-      if (!files.length) { S.toast("Please select at least one photo", "error"); return; }
-
-      $("#btnPostItem").disabled = true;
-      $("#btnPostItem").textContent = "Uploading photos and publishing…";
-
-      try {
-        await S.createProduct({
-          title: $("#sellTitle").value,
-          category: $("#sellCategory").value,
-          price: parseFloat($("#sellPrice").value),
-          stock: parseInt($("#sellStock").value, 10) || 1,
-          description: $("#sellDesc").value
-        }, files);
-
-        S.toast("Your item is live on ShopSphere! 🚀");
-        $("#sellModal").classList.remove("open");
-        $("#overlay").classList.remove("open");
-        $("#sellForm").reset();
-        await fetchAndRenderProducts();
-      } catch (err) {
-        S.toast(err.message, "error");
-      } finally {
-        $("#btnPostItem").disabled = false;
-        $("#btnPostItem").textContent = "Upload and publish";
-      }
-    });
-
-    $$("[data-close-modal]").forEach(b => b.addEventListener("click", () => {
-      closeModal(b.dataset.closeModal);
-    }));
+    $$("[data-close-modal]").forEach(b => b.addEventListener("click", () => closeModal(b.dataset.closeModal)));
     $$("[data-close]").forEach((button) => button.addEventListener("click", () => closeDrawer(button.dataset.close)));
-    $("#overlay").addEventListener("click", (e) => {
-      if (e.target.id === "overlay") closeAll();
-    });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAll(); });
-    document.addEventListener("click", (e) => {
-      const cta = e.target.closest("[data-scroll-products]");
-      if (cta) {
-        if (cta.dataset.slideCat) setCategory(cta.dataset.slideCat);
-        scrollToProducts();
-      }
-    });
+    $("#overlay").addEventListener("click", closeAll);
     $("#btnMenu").addEventListener("click", () => openDrawer("mobileDrawer"));
 
     const input = $("#searchInput");
@@ -635,20 +593,18 @@
       state.sort = e.target.value;
       renderProducts();
     });
-    $("#currencySel").addEventListener("change", (e) => {
+
+    $("#currencySel").addEventListener("change", (event) => {
       try {
-        S.setCurrency(e.target.value);
+        S.setCurrency(event.target.value);
         renderProducts();
-        if ($("#cartDrawer").classList.contains("open")) renderCart();
+        renderCart();
       } catch (err) {
-        e.target.value = S.getCurrency();
         S.toast(err.message, "error");
       }
     });
 
-    $("#btnCart").addEventListener("click", () => {
-      openCart();
-    });
+    $("#btnCart").addEventListener("click", openCart);
     $("#checkoutForm").addEventListener("submit", submitWhatsAppOrder);
   }
 

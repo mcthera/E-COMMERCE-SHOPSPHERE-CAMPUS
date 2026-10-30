@@ -1,116 +1,57 @@
 (function (global) {
   "use strict";
 
-  // --- REPLACE WITH YOUR SUPABASE CREDENTIALS ---
-  const SUPABASE_URL = "https://krtbftjnzkjlufligsok.supabase.co/rest/v1/";
+  const SUPABASE_URL = "https://krtbftjnzkjlufligsok.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_uGQjU0wbAtup1XsIRpofpQ_dl2PLTax";
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      storage: window.sessionStorage,
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
 
-  const supabaseUrl = SUPABASE_URL.replace(/\/rest\/v1\/?$/, "");
-  const supabase = window.supabase.createClient(supabaseUrl, SUPABASE_ANON_KEY);
-
-  const CATEGORIES = [
-    "Electronics", "Fashion", "Home", "Mobile", "Beauty", "Groceries", "Sports"
-  ];
-
+  const CATEGORIES = ["Electronics", "Fashion", "Home", "Mobile", "Beauty", "Groceries", "Sports"];
   const CURRENCIES = {
     GHS: { symbol: "GH₵", locale: "en-GH" },
     NGN: { symbol: "₦", locale: "en-NG" },
-    USD: { symbol: "$", locale: "en-US" }
+    USD: { symbol: "$", locale: "en-US" },
   };
+  let currency = "GHS";
+  let cart = [];
+  let toastHost = null;
 
-  function compressImage(source, maxEdge = 1200, quality = 0.82) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      const objectUrl = typeof source === "string" ? null : URL.createObjectURL(source);
-      const releaseObjectUrl = () => {
-        if (objectUrl) URL.revokeObjectURL(objectUrl);
-      };
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > height && width > maxEdge) {
-          height = Math.round((height * maxEdge) / width);
-          width = maxEdge;
-        } else if (height > maxEdge) {
-          width = Math.round((width * maxEdge) / height);
-          height = maxEdge;
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const context = canvas.getContext("2d");
-        if (!context) {
-          releaseObjectUrl();
-          reject(new Error("Could not process image"));
-          return;
-        }
-        context.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL("image/jpeg", quality);
-        releaseObjectUrl();
-        resolve(dataUrl);
-      };
-      img.onerror = () => {
-        releaseObjectUrl();
-        reject(new Error("Could not read image"));
-      };
-      img.src = objectUrl || source;
-    });
-  }
+  async function signUp(email, password, fullName, phone, role = "customer") {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedRole = role === "seller" ? "seller" : role === "customer" ? "customer" : null;
+    if (!normalizedRole) throw new Error("Choose a valid account type.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      throw new Error("Enter a valid email address.");
+    }
+    if (!String(fullName || "").trim()) throw new Error("Enter your full name.");
+    if (!String(phone || "").trim()) throw new Error("Enter your phone number.");
 
-  // --- AUTHENTICATION (Campus Phone & Index Number) ---
-  async function signUp(identifier, indexNumber, fullName, phone) {
-    const signupPhone = phone.trim() || identifier.trim();
-    const cleanPhone = signupPhone.replace(/[^0-9]/g, "");
-    if (!cleanPhone) throw new Error("Enter a valid phone number.");
-    const internalEmail = `${cleanPhone}@campus.shopsphere`;
     const { data, error } = await supabase.auth.signUp({
-      email: internalEmail,
-      password: indexNumber,
-      options: { data: { full_name: fullName, phone_whatsapp: signupPhone } }
+      email: normalizedEmail,
+      password,
+      options: {
+        data: {
+          full_name: String(fullName).trim(),
+          phone_whatsapp: String(phone).trim(),
+          role: normalizedRole,
+        },
+      },
     });
     if (error) throw error;
-
-    if (data.user) {
-      const { error: profileError } = await supabase.from("profiles").upsert([
-        { id: data.user.id, full_name: fullName, phone_whatsapp: signupPhone }
-      ]);
-      if (profileError) throw profileError;
-    }
     return data;
   }
 
-  async function signIn(identifier, indexNumber) {
-    const entered = identifier.trim();
-    const cleanPhone = entered.replace(/[^0-9]/g, "");
-    const isPhone = /^[+\d\s()-]+$/.test(entered) && cleanPhone.length > 5;
-    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entered);
-    let internalEmail;
-
-    if (isEmail) {
-      internalEmail = entered.toLowerCase();
-    } else if (isPhone) {
-      internalEmail = `${cleanPhone}@campus.shopsphere`;
-    } else {
-      const escapedName = entered.replace(/[\\%_]/g, "\\$&");
-      const { data: profiles, error: profileError } = await supabase
-        .from("profiles")
-        .select("phone_whatsapp")
-        .ilike("full_name", escapedName)
-        .limit(2);
-      if (profileError) throw profileError;
-      if (profiles.length > 1) {
-        throw new Error("More than one student uses that name. Sign in with your phone number.");
-      }
-      if (!profiles.length || !profiles[0].phone_whatsapp) {
-        throw new Error("No student account found with that name.");
-      }
-      const profilePhone = profiles[0].phone_whatsapp.replace(/[^0-9]/g, "");
-      if (!profilePhone) throw new Error("That account has no valid phone number. Contact support.");
-      internalEmail = `${profilePhone}@campus.shopsphere`;
-    }
-
+  async function signIn(email, password) {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: internalEmail,
-      password: indexNumber
+      email: normalizedEmail,
+      password,
     });
     if (error) throw error;
     return data;
@@ -119,180 +60,189 @@
   async function signOut() {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
+    cart = [];
   }
 
   async function getCurrentUser() {
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    if (!sessionData.session) return null;
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError) throw authError;
     if (!user) return null;
 
-    const { data: profile, error: profileError } = await supabase
+    const { data: profile, error } = await supabase
       .from("profiles")
-      .select("*")
+      .select("id, full_name, phone_whatsapp, role, seller_status")
       .eq("id", user.id)
       .single();
-    if (profileError && profileError.code !== "PGRST116") throw profileError;
-
+    if (error) throw error;
     return { ...user, profile };
   }
 
-  // --- PRODUCTS ---
   async function getProducts() {
     const { data, error } = await supabase
       .from("products")
       .select("*")
       .order("created_at", { ascending: false });
-    if (error) {
-      console.error("Error fetching products:", error);
-      throw error;
-    }
-    return data.map(p => ({
-      ...p,
-      discountPrice: p.discount_price,
-      createdAt: new Date(p.created_at).getTime()
+    if (error) throw error;
+    return (data || []).map((product) => ({
+      ...product,
+      discountPrice: product.discount_price,
+      createdAt: new Date(product.created_at).getTime(),
     }));
   }
 
-  // --- REAL PHOTO UPLOAD TO SUPABASE STORAGE ---
-  async function uploadProductPhoto(fileOrDataUrl) {
-    let fileBlob = fileOrDataUrl;
-    if (typeof fileOrDataUrl === "string" && fileOrDataUrl.startsWith("data:")) {
-      const res = await fetch(fileOrDataUrl);
-      fileBlob = await res.blob();
-    }
-
-    const fileName = `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
-    const { error: uploadError } = await supabase.storage
-      .from("product-images")
-      .upload(`public/${fileName}`, fileBlob, { contentType: "image/jpeg", upsert: true });
-
-    if (uploadError) throw uploadError;
-
-    const { data: publicUrlData } = supabase.storage
-      .from("product-images")
-      .getPublicUrl(`public/${fileName}`);
-
-    return publicUrlData.publicUrl;
-  }
-
-  async function createProduct(productData, imageFiles) {
+  async function uploadProductPhoto(file) {
     const user = await getCurrentUser();
-    if (!user) throw new Error("You must be logged in to post an item.");
-
-    const uploadedUrls = [];
-    for (const file of imageFiles) {
-      const url = await uploadProductPhoto(file);
-      uploadedUrls.push(url);
+    if (!user || user.profile.role !== "seller" || user.profile.seller_status !== "approved") {
+      throw new Error("Only approved sellers can upload product photos.");
     }
-
-    const { data, error } = await supabase.from("products").insert([
-      {
-        seller_id: user.id,
-        seller_name: user.profile?.full_name || "Verified Seller",
-        seller_phone: user.profile?.phone_whatsapp || "Not provided",
-        title: productData.title,
-        category: productData.category,
-        price: productData.price,
-        discount_price: productData.discountPrice || 0,
-        stock: productData.stock ?? 1,
-        description: productData.description,
-        specs: productData.specs,
-        images: uploadedUrls
-      }
-    ]);
-
+    const fileName = `${user.id}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+    const { error } = await supabase.storage
+      .from("product-images")
+      .upload(fileName, file, { contentType: file.type || "image/jpeg", upsert: false });
     if (error) throw error;
-    return data;
+    const { data } = supabase.storage.from("product-images").getPublicUrl(fileName);
+    return data.publicUrl;
   }
 
-  async function saveProduct(product) {
-    const payload = {
-      title: product.title,
-      category: product.category,
-      price: product.price,
-      discount_price: product.discountPrice || 0,
-      stock: product.stock,
-      description: product.description || "",
-      specs: product.specs || "",
-      images: product.images || []
-    };
-    let query;
-    if (product.id) {
-      query = supabase.from("products").update(payload).eq("id", product.id);
-    } else {
-      const user = await getCurrentUser();
-      if (!user) throw new Error("Sign in with a seller account before adding a product.");
-      payload.seller_id = user.id;
-      payload.seller_name = user.profile?.full_name || "Verified Seller";
-      payload.seller_phone = user.profile?.phone_whatsapp || "Not provided";
-      query = supabase.from("products").insert(payload);
+  async function createProduct(product, imageFiles) {
+    const user = await getCurrentUser();
+    if (!user || user.profile.role !== "seller") {
+      throw new Error("Sign in with a seller account before posting a product.");
     }
-    const { data, error } = await query.select("*").single();
+    if (user.profile.seller_status !== "approved") {
+      throw new Error("Your seller account is awaiting moderator approval.");
+    }
+    const images = [];
+    for (const file of imageFiles) images.push(await uploadProductPhoto(file));
+
+    const { data, error } = await supabase
+      .from("products")
+      .insert({
+        seller_id: user.id,
+        seller_name: user.profile.full_name || "Verified Seller",
+        seller_phone: user.profile.phone_whatsapp || "",
+        title: product.title,
+        category: product.category,
+        price: product.price,
+        discount_price: 0,
+        stock: product.stock,
+        description: product.description || "",
+        specs: "",
+        images,
+      })
+      .select("*")
+      .single();
     if (error) throw error;
     return data;
   }
 
   async function deleteProduct(id) {
-    const { error } = await supabase.from("products").delete().eq("id", id).select("id").single();
+    const { data, error } = await supabase
+      .from("products")
+      .delete()
+      .eq("id", id)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!data) throw new Error("The product was not deleted. Check your account permissions.");
   }
 
-  // --- CART (Local Session for Buyer Checkout) ---
-  const getCart = () => {
-    try { return JSON.parse(localStorage.getItem("ecom_cart")) || []; }
-    catch (e) { return []; }
-  };
-  const saveCart = (cart) => localStorage.setItem("ecom_cart", JSON.stringify(cart));
+  async function createOrder(customer, items) {
+    const user = await getCurrentUser();
+    if (!user || user.profile.role !== "customer") {
+      throw new Error("Sign in with a customer account before checking out.");
+    }
+    const { data, error } = await supabase.rpc("place_order", {
+      p_customer_name: customer.name,
+      p_customer_phone: customer.phone,
+      p_customer_address: customer.address,
+      p_class_name: customer.className,
+      p_index_number: customer.indexNumber,
+      p_items: items.map((item) => ({ product_id: item.id, quantity: item.qty })),
+    });
+    if (error) throw error;
+    const order = Array.isArray(data) ? data[0] : data;
+    if (!order) throw new Error("The order was not saved.");
+    return order;
+  }
+
+  async function getOrder(reference) {
+    const user = await getCurrentUser();
+    if (!user) throw new Error("Sign in to track your orders.");
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, reference, customer_id, customer_name, customer_phone, customer_address, class_name, index_number, items, total, status, created_at")
+      .eq("reference", String(reference || "").trim().toUpperCase())
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+
+  async function getSellerOrders() {
+    const { data, error } = await supabase.rpc("get_seller_orders");
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function updateOrderStatus(orderId, status) {
+    const { data, error } = await supabase.rpc("update_order_status", {
+      p_order_id: orderId,
+      p_status: status,
+    });
+    if (error) throw error;
+    if (!data) throw new Error("The order status was not updated.");
+    return data;
+  }
+
+  function getCart() {
+    return cart;
+  }
+
+  function saveCart(nextCart) {
+    cart = Array.isArray(nextCart)
+      ? nextCart.filter((item) => item && typeof item.id === "string" && Number.isInteger(item.qty) && item.qty > 0)
+      : [];
+  }
 
   function getCurrency() {
-    try {
-      const settings = JSON.parse(localStorage.getItem("ecom_settings")) || {};
-      return CURRENCIES[settings.currency] ? settings.currency : "GHS";
-    } catch (err) {
-      console.warn("Could not read currency setting:", err);
-      return "GHS";
-    }
+    return currency;
   }
 
-  function setCurrency(currencyCode) {
-    if (!CURRENCIES[currencyCode]) throw new Error("Unsupported currency.");
-    let settings = {};
-    try {
-      settings = JSON.parse(localStorage.getItem("ecom_settings")) || {};
-    } catch (err) {
-      console.warn("Replacing unreadable store settings:", err);
-    }
-    settings.currency = currencyCode;
-    localStorage.setItem("ecom_settings", JSON.stringify(settings));
+  function setCurrency(code) {
+    if (!CURRENCIES[code]) throw new Error("Unsupported currency.");
+    currency = code;
   }
 
   function formatPrice(amount, currencyCode) {
-    const code = currencyCode || getCurrency();
-    const cfg = CURRENCIES[code] || CURRENCIES.GHS;
-    const n = Number(amount || 0);
-    return `${cfg.symbol}${n.toLocaleString(cfg.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const config = CURRENCIES[currencyCode || currency] || CURRENCIES.GHS;
+    const value = Number(amount || 0);
+    return `${config.symbol}${value.toLocaleString(config.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
-  let _toastHost = null;
-  function toast(message, type = "success", ms = 2600) {
-    if (!_toastHost) {
-      _toastHost = document.getElementById("toastHost") || document.createElement("div");
-      _toastHost.id = "toastHost";
-      _toastHost.className = "toast-host";
-      document.body.appendChild(_toastHost);
+  function toast(message, type = "success", duration = 2600) {
+    if (!toastHost) {
+      toastHost = document.getElementById("toastHost") || document.createElement("div");
+      toastHost.id = "toastHost";
+      toastHost.className = "toast-host";
+      if (!toastHost.isConnected) document.body.appendChild(toastHost);
     }
-    const el = document.createElement("div");
-    el.className = `toast toast--${type}`;
+    const element = document.createElement("div");
+    element.className = `toast toast--${type}`;
     const dot = document.createElement("span");
     dot.className = "toast__dot";
     const text = document.createElement("span");
     text.textContent = String(message);
-    el.append(dot, text);
-    _toastHost.appendChild(el);
-    requestAnimationFrame(() => el.classList.add("toast--show"));
+    element.append(dot, text);
+    toastHost.appendChild(element);
+    requestAnimationFrame(() => element.classList.add("toast--show"));
     setTimeout(() => {
-      el.classList.remove("toast--show");
-      setTimeout(() => el.remove(), 300);
-    }, ms);
+      element.classList.remove("toast--show");
+      setTimeout(() => element.remove(), 300);
+    }, duration);
   }
 
   global.Store = {
@@ -305,15 +255,16 @@
     getCurrentUser,
     getProducts,
     createProduct,
-    saveProduct,
     deleteProduct,
-    uploadProductPhoto,
-    compressImage,
+    createOrder,
+    getOrder,
+    getSellerOrders,
+    updateOrderStatus,
     getCart,
     saveCart,
     formatPrice,
     getCurrency,
     setCurrency,
-    toast
+    toast,
   };
 })(window);
